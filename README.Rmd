@@ -58,3 +58,34 @@ Or the derived adjustment factor plot:
 ```{r }
 adjust_fact_plot(data_to_check$nsa, data_to_check$sa)
 ```
+
+
+
+## Example Pipeline
+
+SAvalidation includes a **full example pipeline** that demonstrates reading SDMX data, performing level 1–3 validations, and generating HTML reports.
+
+### Locate the pipeline script
+
+Once the package is installed, you can find the example pipeline script and the test XML data file using `system.file()`:
+
+```{r,eval=FALSE}
+# Path to the pipeline script
+pipeline_path <- system.file("scripts", "pipeline_example.R", package = "SAvalidation")
+
+# Path to the test SDMX file
+xml_path <- system.file("extdata", "NAMAIN_T01GDP_Q_2024_0002.xml", package = "SAvalidation")
+
+pipeline_path
+xml_path
+```
+
+### Run the pipeline
+
+You can run the pipeline by sourcing the script:
+
+```{r,eval=FALSE}
+source(pipeline_path)
+```
+
+

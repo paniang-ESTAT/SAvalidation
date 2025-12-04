@@ -33,7 +33,9 @@ of time series (the unadjusted and seasonally adjusted):
 ``` r
 library(SAvalidation)
 level1_validation(data_to_check$nsa, data_to_check$sa)
-#> [1] "FAIL: EVIDENCE OF RESIDUAL SEASONALITY OR CALENDAR EFFECTS IN SA SERIES"
+#> [1] "PASS:"                                                              "NSA SERIES HAS EVIDENCE OF SEASONALITY AND NSA != SA"              
+#> [3] "SA SERIES HAS NO EVIDENCE OF RESIDUAL SEASONAL OR CALENDAR EFFECTS" "ANNUAL TOTALS CHECK PASSED"                                        
+#> [5] "NO NEGATIVE VALUES IN THE SA SERIES"                                "OVER-ADJUSTMENT CHECK PASSED"
 ```
 
 A level 2 validation report can be created with `level2_validation()`
@@ -61,3 +63,33 @@ adjust_fact_plot(data_to_check$nsa, data_to_check$sa)
 ```
 
 <img src="man/figures/README-unnamed-chunk-6-1.png" width="100%" />
+
+## Example Pipeline
+
+SAvalidation includes a **full example pipeline** that demonstrates
+reading SDMX data, performing level 1–3 validations, and generating HTML
+reports.
+
+### Locate the pipeline script
+
+Once the package is installed, you can find the example pipeline script
+and the test XML data file using `system.file()`:
+
+``` r
+# Path to the pipeline script
+pipeline_path <- system.file("scripts", "pipeline_example.R", package = "SAvalidation")
+
+# Path to the test SDMX file
+xml_path <- system.file("extdata", "NAMAIN_T01GDP_Q_2024_0002.xml", package = "SAvalidation")
+
+pipeline_path
+xml_path
+```
+
+### Run the pipeline
+
+You can run the pipeline by sourcing the script:
+
+``` r
+source(pipeline_path)
+```
