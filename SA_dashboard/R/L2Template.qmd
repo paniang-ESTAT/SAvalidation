@@ -1,0 +1,993 @@
+---
+title: "QNA"
+author: "GOPA SA experts / INE-Spain"
+date: today
+format: dashboard
+server: shiny
+params:
+  sdir: "NA"
+  default_type: "X13"
+  default_spec_nsa: "RSA2c"
+  default_spec_sa: "RSA2c"
+---
+
+
+```{r}
+#| context: setup
+
+library(knitr)
+library(kableExtra)
+library(SAvalidation)
+library(shiny)
+library(openxlsx)
+library(ggplot2)
+```
+
+```{r}
+#| context: data
+
+data_dir <- params$sdir
+
+sheets <- getSheetNames(file.path(data_dir,"NSA.xlsx"))
+NSA_series <- lapply(sheets,read.xlsx,xlsxFile=file.path(data_dir,"NSA.xlsx"), detectDates = TRUE, sep.names = " ")
+names(NSA_series) <- sheets
+
+sheets <- getSheetNames(file.path(data_dir,"SA.xlsx"))
+SA_series <- lapply(sheets,read.xlsx,xlsxFile=file.path(data_dir,"SA.xlsx"), detectDates = TRUE, sep.names = " ")
+names(SA_series) <- sheets
+
+NSA_to_check <- NSA_series[[1]][c(1,2)]
+SA_to_check <- SA_series[[1]][c(1,2)]
+
+start_date <- zoo::as.Date(NSA_to_check[1,1])
+start_yr <- lubridate::year(start_date)
+start_qr <- lubridate::quarter(start_date)
+
+nsa <- stats::ts(NSA_to_check[,2],start=c(start_yr,start_qr),frequency = 4)
+sa <- stats::ts(SA_to_check[,2],start=c(start_yr,start_qr),frequency = 4)
+
+ts_start <- stats::start(nsa)
+ts_freq <- stats::frequency(nsa)
+
+default_type <- params$default_type
+default_spec_nsa <- params$default_spec_nsa
+default_spec_sa <- params$default_spec_sa
+
+start_yr <- as.numeric(substr(start_date,1,4))
+
+start_5yr <- end(nsa)-5
+
+mid_yr <- mean(c(stats::start(nsa)[1], stats::end(nsa)[1]))
+
+```
+
+
+#  {.sidebar width="375px"}
+
+
+**Select input serie**
+
+```{r}
+selectInput('via', 'Units', names(NSA_series), selected=names(NSA_series)[1])
+selectInput('agg', 'Aggregate', names(NSA_series[[1]])[-1], selected=names(NSA_series[[1]])[2])
+actionButton("close", "Cierre de Sesión")
+```
+
+
+```{r}
+#| context: server
+
+observeEvent(input$close, {
+          stopApp()
+        })
+
+datos <- reactiveValues(via=names(NSA_series)[1],
+                        agg=names(NSA_series[[1]])[2])
+
+
+observeEvent(input$via,{
+
+  updateSelectInput(inputId='agg',
+                    choices=names(NSA_series[[input$via]])[-1],
+                    selected=names(NSA_series[[input$via]])[2])
+
+  datos$via <- input$via
+  datos$agg <- names(NSA_series[[input$via]])[2]
+
+})
+
+observeEvent(input$agg,{
+
+  datos$agg <- input$agg
+
+})
+
+nsa <- reactive({
+  stats::ts(NSA_series[[datos$via]][,datos$agg],start=c(start_yr,start_qr),frequency = 4)
+  })
+
+sa <- reactive({
+  stats::ts(SA_series[[datos$via]][,datos$agg],start=c(start_yr,start_qr),frequency = 4)
+  })
+
+l1_out <- reactive({
+  level1_validation(nsa(),sa(),
+                            default_type = default_type,
+                            default_spec_nsa = default_spec_nsa,
+                            default_spec_sa = default_spec_sa)
+  })
+
+if(default_type=="TS"){
+  nsa_mod <- reactive({RJDemetra::jtramoseats(nsa(),
+                                   spec = default_spec_nsa)})
+  sa_mod <- reactive({RJDemetra::jtramoseats(sa(),
+                                  spec = default_spec_sa)})
+  nsa_mod5 <- reactive({RJDemetra::jtramoseats(window(nsa(),start=start_5yr),
+                                    spec = default_spec_nsa)})
+  sa_mod5 <- reactive({RJDemetra::jtramoseats(window(sa(),start=start_5yr),
+                                   spec = default_spec_sa)})
+}
+if(default_type=="X13"){
+  nsa_mod <- reactive({RJDemetra::jx13(nsa(),
+                            spec = default_spec_nsa)})
+  sa_mod <- reactive({RJDemetra::jx13(sa(),
+                           spec = default_spec_sa)})
+  nsa_mod5 <- reactive({RJDemetra::jx13(window(nsa(),start=start_5yr),
+                             spec = default_spec_nsa)})
+  sa_mod5 <- reactive({RJDemetra::jx13(window(sa(),start=start_5yr),
+                            spec = default_spec_sa)})
+
+}
+```
+
+------------------------------------------------------------------------
+
+**Level 1 validation results**
+
+```{r}
+htmlOutput("text")
+```
+
+```{r}
+#| context: server
+
+output$text <- renderText({
+
+  if(substr(l1_out()[1],1,1)!="P") {
+
+    color <- "#FFCDCD"
+    paste(sprintf(
+      '<p style="background-color: %s;">%s</p>',
+      color,
+      paste(l1_out(), collapse = "<br/> ")
+      ))
+
+  } else {
+
+    i_warning <- grep("WARNING",l1_out())
+
+    if(length(i_warning)!=0){
+
+      paste(sprintf(
+        '<p style="background-color: %s;">%s</p>',
+        "#DAFFCD",
+        paste(l1_out()[-i_warning], collapse = "<br/>")
+        ))
+
+      paste(sprintf(
+        '<p style="background-color: %s;">%s</p>',
+        "#FFECCD",
+        paste(c("WARNING:", gsub("WARNING: ", "", l1_out()[i_warning])), collapse = "<br/> ")
+        ))
+
+    } else {
+
+      color <- "#DAFFCD"
+      paste(sprintf(
+        '<p style="background-color: %s;">%s</p>',
+        color,
+        paste(l1_out(), collapse = "<br/> ")
+        ))
+
+    }
+}
+
+})
+
+```
+
+
+------------------------------------------------------------------------
+
+
+
+# Summary
+
+## Row
+
+::: {.card title="NSA and SA"}
+
+
+```{r}
+plotOutput('plot')
+```
+
+
+```{r}
+#| context: server
+
+output$plot <- renderPlot({
+  nsa_sa_plot(nsa(),sa(),title = input$agg) +
+  ggplot2::labs(title = NULL, x = NULL, y = NULL) +
+    ggplot2::theme(legend.position="top",
+                   axis.text = element_text(size=10),
+                   axis.title = element_text(size=18),
+                   plot.title = element_text(size=22),
+                   legend.text = element_text(size=15),
+                   legend.title=element_text(size=15))
+
+})
+
+```
+:::
+
+### Column
+
+::: {.card title="Derived adjustment factor"}
+
+```{r}
+plotOutput('plot2')
+```
+
+
+```{r}
+#| context: server
+
+output$plot2 <- renderPlot({
+
+  adjust_fact_plot(nsa(),sa(),title = input$agg) +
+  ggplot2::labs(title = NULL, x = NULL)+
+        ggplot2::theme(axis.text = element_text(size=10),
+                       axis.title = element_text(size=18),
+                       plot.title = element_text(size=22),
+                       legend.text = element_text(size=15),
+                       legend.title=element_text(size=15))
+
+})
+```
+:::
+
+## Row {height="40%"}
+
+::: {.card title="Test for seasonality in NSA"}
+
+```{r}
+htmlOutput("text2")
+```
+
+
+```{r}
+#| context: server
+
+comb_test_res_t2 <- reactive({get_combined_seasonality_test(nsa_mod())})
+
+output$text2 <- renderText({
+
+  paste(sprintf(
+    '<p style="background-color: %s;">Combined test: %s</p>',
+    ifelse(comb_test_res_t2()=="None", "#FFCDCD",
+           ifelse(comb_test_res_t2()=="ProbablyNone",
+                  "#FFECCD",
+                  "#DAFFCD")
+           ),
+    comb_test_res_t2()
+  ))
+
+})
+```
+:::
+
+::: {.card title="Test for seasonality in SA"}
+```{r}
+htmlOutput("text3")
+```
+
+
+```{r}
+#| context: server
+
+comb_test_res_t3 <- reactive({get_combined_seasonality_test(sa_mod())})
+
+output$text3 <- renderText({
+
+  paste(sprintf(
+  '<p style="background-color: %s;">Combined test: %s</p>',
+  ifelse(comb_test_res_t3()=="None", "#DAFFCD",
+         ifelse(comb_test_res_t3()=="ProbablyNone",
+                "#DAFFCD",
+                "#FFCDCD")
+         ),
+  comb_test_res_t3()
+  )
+)
+
+})
+```
+:::
+
+::: {.card title="Test for residual calendar in SA"}
+```{r}
+htmlOutput("text4")
+```
+
+
+```{r}
+#| context: server
+
+output$text4 <- renderText({
+
+  if(check_for_calendar_vars(sa_mod())){
+      '<p style="background-color: #FFCDCD;">Evidence of residual calendar effects in SA series</p>'
+    }else{
+        '<p style="background-color: #DAFFCD;">No evidence of residual calendar effects in SA series</p>'
+      }
+
+})
+
+
+regression.coefficients <- reactiveValues(coef = NULL)
+
+observe({
+
+  regression.coefficients$coef <- RJDemetra::get_indicators(sa_mod(), "model.coefficients")[[1]]
+
+  if (!is.null(regression.coefficients$coef)){
+    regression.tstat <- regression.coefficients$coef[,1]/regression.coefficients$coef[,2]
+    regression.coefficients$coef <- cbind(regression.coefficients$coef,regression.tstat)
+    rownames(regression.coefficients$coef) <- RJDemetra::result(jrobj,"model.description")[[1]]
+    colnames(regression.coefficients$coef) <- c("Estimate","Std. Error","T-stat")
+  }
+
+})
+```
+
+
+:::
+
+
+# Plots
+
+
+::: {.panel-tabset height="600px"}
+
+## NSA and SA
+
+```{r}
+plotOutput('plot3', width = "100%", height = "900")
+```
+
+```{r}
+#| label: fig-nsa-sa
+#| fig-cap: "NSA and SA series"
+#| context: server
+
+
+output$plot3 <- renderPlot({
+
+  nsa_sa_plot(nsa(),sa(),title = input$agg) +
+    ggplot2::theme(axis.text = element_text(size=15),
+                   axis.title = element_text(size=18),
+                   plot.title = element_text(size=22),
+                   legend.text = element_text(size=15),
+                   legend.title=element_text(size=15))
+
+
+})
+```
+
+Plot of the unadjusted (NSA) and seasonally adjusted (SA) series.
+
+## Derived adjustment factors
+
+```{r}
+plotOutput('plot4', width = "100%", height = "900")
+```
+
+```{r}
+#| label: fig-adjustment
+#| context: server
+
+
+output$plot4 <- renderPlot({
+
+  adjust_fact_plot(nsa(),sa(),title = input$agg) +
+      ggplot2::ggtitle(NULL)+
+    ggplot2::theme(axis.text = element_text(size=15),
+                   axis.title = element_text(size=18),
+                   plot.title = element_text(size=22),
+                   legend.text = element_text(size=15),
+                   legend.title=element_text(size=15))
+
+})
+```
+
+Plot of the derived adjustment factor. Note that if these are fluctuations around 1 this is because an automatic test for transformation on the NSA series has concluded that the series is likely to have multiplicative decomposition, while if they are fluctuations around 0 the test concluded the series has an additive decomposition.
+
+
+## Annual totals
+
+```{r}
+plotOutput('plot5', width = "100%", height = "900")
+```
+
+```{r}
+#| label: fig-annual-totals
+#| fig-cap: "Relative difference of annual totals"
+#| context: server
+
+output$plot5 <- renderPlot({
+
+  annual_totals_plot(nsa(),sa(),title = input$agg) +
+    ggplot2::theme(axis.text = element_text(size=15),
+                   axis.title = element_text(size=18),
+                   plot.title = element_text(size=22),
+                   legend.text = element_text(size=15),
+                   legend.title=element_text(size=15)) +
+    ggplot2::geom_label(x = mid_yr, y = 0.01, label = "Level 1 warning threshold", size=6) +
+    ggplot2::geom_label(x = mid_yr, y = 0.05, label = "Bad annual totals", size=6)
+
+})
+```
+
+## NSA and SA quarterly growths
+
+```{r}
+plotOutput('plot6', width = "100%", height = "900")
+```
+
+
+```{r}
+#| label: fig-nsa-sa-qgr
+#| fig-cap: "NSA and SA series quarterly change (percent)"
+#| context: server
+
+nsa_qgr_p6 <- reactive({diff(nsa())/nsa()})
+sa_qgr_p6 <- reactive({diff(sa())/sa()})
+
+output$plot6 <- renderPlot({
+
+  nsa_sa_plot(nsa_qgr_p6(),sa_qgr_p6(),title = input$agg) +
+    ggplot2::theme(axis.text = element_text(size=15),
+                   axis.title = element_text(size=18),
+                   plot.title = element_text(size=22),
+                   legend.text = element_text(size=15),
+                   legend.title=element_text(size=15))
+
+})
+```
+
+## NSA and SA annual growths
+
+```{r}
+plotOutput('plot7', width = "100%", height = "900")
+```
+
+```{r}
+#| label: fig-nsa-sa-agr
+#| fig-cap: "NSA and SA series annual change (percent)"
+#| context: server
+
+p_p7 <- reactive({frequency(nsa())})
+nsa_agr_p7 <-  reactive({diff(nsa(),p_p7())/nsa()})
+sa_agr_p7 <- reactive({diff(sa(),p_p7())/sa()})
+
+output$plot7 <- renderPlot({
+
+  nsa_sa_plot(nsa_agr_p7(),sa_agr_p7(),title = input$agg) +
+    ggplot2::theme(axis.text = element_text(size=15),
+                   axis.title = element_text(size=18),
+                   plot.title = element_text(size=22),
+                   legend.text = element_text(size=15),
+                   legend.title=element_text(size=15))
+
+})
+```
+
+
+Plot of the unadjusted (NSA) and seasonally adjusted (SA) series.
+
+
+:::
+
+# Seasonal and calendar effects
+
+## Row
+
+### Column
+
+
+::: {.card title="Seasonality tests on full NSA series"}
+
+```{r}
+htmlOutput("text5")
+```
+
+
+```{r}
+#| context: server
+
+output$text5 <- renderText({
+
+  comb_test_res <- get_combined_seasonality_test(nsa_mod())
+
+  paste(sprintf(
+    '<p style="background-color: %s;">Combined test: %s</p>',
+    ifelse(comb_test_res=="None", "#FFCDCD",
+           ifelse(comb_test_res=="ProbablyNone",
+                  "#FFECCD",
+                  "#DAFFCD")
+           ),
+    comb_test_res
+    )
+  )
+})
+```
+
+
+```{r}
+tableOutput("tab1")
+```
+
+
+```{r}
+#| context: server
+
+residuals_tests_names <- sprintf("diagnostics.%s",
+                                  c("seas-lin-f",
+                                    "seas-lin-qs",
+                                    "seas-lin-kw",
+                                    "seas-lin-friedman",
+                                    "seas-lin-periodogram"))
+
+output$tab1 <- function(){
+
+  test_results <- do.call(rbind,RJDemetra::get_indicators(nsa_mod(), residuals_tests_names))
+
+  dplyr::tibble(Test=c("F-test","QS","Kruskall-Wallis","Friedman","Periodogram"),
+              `Test statistic` = test_results[,1],
+              `P-value` = test_results[,2]) |>
+  dplyr::mutate(`P-value` = cell_spec(sprintf("%.3f", `P-value`),
+                                      background = ifelse(`P-value`<=0.05,"#DAFFCD","#FFCDCD")) ) |>
+  kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"',escape = FALSE) |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+```
+
+:::
+
+::: {.card title="Seasonality tests on NSA series - last 5 years"}
+
+```{r}
+htmlOutput("text6")
+```
+
+```{r}
+#| context: server
+
+output$text6 <- renderText({
+
+  comb_test_res <- get_combined_seasonality_test(nsa_mod5())
+
+  paste(sprintf(
+  '<p style="background-color: %s;">Combined test: %s</p>',
+  ifelse(comb_test_res=="None", "#FFCDCD",
+         ifelse(comb_test_res=="ProbablyNone",
+                "#FFECCD",
+                "#DAFFCD")
+         ),
+  comb_test_res
+  )
+)
+
+})
+
+```
+
+
+```{r}
+tableOutput("tab2")
+```
+
+
+```{r}
+#| context: server
+
+residuals_tests_names <- sprintf("diagnostics.%s",
+                                  c("seas-lin-f",
+                                    "seas-lin-qs",
+                                    "seas-lin-kw",
+                                    "seas-lin-friedman",
+                                    "seas-lin-periodogram"))
+
+output$tab2 <- function(){
+
+  test_results <- do.call(rbind,RJDemetra::get_indicators(nsa_mod5(), residuals_tests_names))
+
+  dplyr::tibble(Test=c("F-test","QS","Kruskall-Wallis","Friedman","Periodogram"),
+              `Test statistic` = test_results[,1],
+              `P-value` = test_results[,2]) |>
+  dplyr::mutate(`P-value` = cell_spec(sprintf("%.3f", `P-value`),
+                                      background = ifelse(`P-value`<=0.05,"#DAFFCD","#FFCDCD")) ) |>
+  kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE) |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+```
+:::
+
+### Column
+
+::: {.card title="Seasonality tests on SA series"}
+
+```{r}
+htmlOutput("text7")
+```
+
+
+```{r}
+#| context: server
+
+output$text7 <- renderText({
+
+  comb_test_res <- get_combined_seasonality_test(sa_mod())
+
+  paste(sprintf(
+  '<p style="background-color: %s;">Combined test: %s</p>',
+  ifelse(comb_test_res=="None", "#DAFFCD",
+         ifelse(comb_test_res=="ProbablyNone",
+                "#DAFFCD",
+                "#FFCDCD")
+         ),
+  comb_test_res
+  )
+)
+
+})
+```
+
+
+```{r}
+tableOutput("tab3")
+```
+
+```{r}
+#| context: server
+
+residuals_tests_names <- sprintf("diagnostics.%s",
+                                  c("seas-lin-f",
+                                    "seas-lin-qs",
+                                    "seas-lin-kw",
+                                    "seas-lin-friedman",
+                                    "seas-lin-periodogram"))
+
+output$tab3 <- function(){
+
+  test_results <- do.call(rbind,RJDemetra::get_indicators(sa_mod(), residuals_tests_names))
+
+  dplyr::tibble(Test=c("F-test","QS","Kruskall-Wallis","Friedman","Periodogram"),
+              `Test statistic` = test_results[,1],
+              `P-value` = test_results[,2])|>
+  dplyr::mutate(`P-value` = cell_spec(sprintf("%.3f", `P-value`),
+                                      background = ifelse(`P-value`<=0.05,"#FFCDCD","#DAFFCD")) ) |>
+  kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE) |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+```
+
+:::
+
+::: {.card title="Seasonality tests on SA series - last 5 years"}
+
+```{r}
+htmlOutput("text8")
+```
+
+```{r}
+#| context: server
+
+
+output$text8 <- renderText({
+
+  comb_test_res <- get_combined_seasonality_test(sa_mod5())
+
+  paste(sprintf(
+  '<p style="background-color: %s;">Combined test: %s</p>',
+  ifelse(comb_test_res=="None", "#DAFFCD",
+         ifelse(comb_test_res=="ProbablyNone",
+                "#DAFFCD",
+                "#FFCDCD")
+         ),
+  comb_test_res
+  )
+)
+
+})
+
+```
+
+
+```{r}
+tableOutput("tab4")
+```
+
+
+```{r}
+#| context: server
+
+residuals_tests_names <- sprintf("diagnostics.%s",
+                                  c("seas-lin-f",
+                                    "seas-lin-qs",
+                                    "seas-lin-kw",
+                                    "seas-lin-friedman",
+                                    "seas-lin-periodogram"))
+
+output$tab4 <- function(){
+
+  test_results_tb <- do.call(rbind,RJDemetra::get_indicators(sa_mod5(), residuals_tests_names))
+
+  dplyr::tibble(Test=c("F-test","QS","Kruskall-Wallis","Friedman","Periodogram"),
+              `Test statistic` = test_results_tb[,1],
+              `P-value` = test_results_tb[,2]) |>
+  dplyr::mutate(`P-value` = cell_spec(sprintf("%.3f", `P-value`),
+                                      background = ifelse(`P-value`<=0.05,"#FFCDCD","#DAFFCD")) ) |>
+  kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE) |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+
+```
+:::
+
+### Column
+
+::: {.card title="Test for residual calendar in SA"}
+
+```{r}
+htmlOutput("text9")
+```
+
+
+```{r}
+#| context: server
+
+output$text9 <- renderText({
+
+  if(check_for_calendar_vars(sa_mod())){
+      '<p style="background-color: #FFCDCD;">Evidence of residual calendar effects in SA series</p>'
+  }else{
+      '<p style="background-color: #DAFFCD;">No evidence of residual calendar effects in SA series</p>'
+  }
+
+})
+
+```
+
+:::
+
+
+::: {.card title="Regression model"}
+
+```{r}
+tableOutput("tab5")
+plotOutput('plot8')
+```
+
+
+```{r}
+#| context: server
+
+output$tab5 <- function(){
+
+  regression.coefficients$coef |>
+  kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE) |>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+
+output$plot8 <- renderPlot({
+
+    if(check_for_calendar_vars(sa_mod())){
+     cal_effect_plot(nsa(),sa(),sa_mod())
+    }
+
+})
+
+```
+:::
+
+
+# Checks on SA series
+
+
+## Column
+
+::: {.card title="Annual totals check: top 5 largest absolute relative differences between NSA and SA annual totals"}
+
+```{r}
+tableOutput("tab6")
+```
+
+```{r}
+#| context: server
+
+output$tab6 <- function(){
+
+  annual_totals <- dplyr::tibble(Date = zoo::as.Date(stats::time(sa())),NSA=nsa(),SA=sa()) |>
+
+    dplyr::mutate(year = lubridate::year(Date),
+                  quarter = lubridate::quarter(Date))|>
+    dplyr::group_by(year) |>
+    dplyr::summarise(nsa_total = round(sum(NSA),3),
+                     sa_total = round(sum(SA),3),
+                     full_yr_check = sum(quarter)) |>
+    dplyr::filter(full_yr_check == 10)|>
+    dplyr::mutate(abs_rel_diff =  abs(nsa_total-sa_total)/((4/sqrt(length(nsa())))*sqrt(sum(nsa()^2)))) |>
+    dplyr::select(year,nsa_total,sa_total,abs_rel_diff) |>
+    dplyr::arrange(-abs_rel_diff) |>
+    dplyr::mutate(`Absolute relative difference`=cell_spec(round(abs_rel_diff,3),background = ifelse(abs_rel_diff<=0.01 ,"#DAFFCD","#FFCDCD")))
+
+  annual_totals[1:5,] |>
+    dplyr::rename(Year=year,
+                  `NSA total` = nsa_total,
+                  `SA total` = sa_total
+                  ) |>
+    dplyr::select(-abs_rel_diff)|>
+    kableExtra::kbl(align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE)|>
+    kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+
+```
+
+:::
+::: {.card title="Tests for randomness in the diffence of NSA and SA annual totals"}
+
+```{r}
+tableOutput("tab7")
+```
+
+```{r}
+#| context: server
+
+output$tab7 <- function(){
+
+  nsa_annual <- stats::aggregate.ts(nsa(),nfrequency = 1)
+  sa_annual <- stats::aggregate.ts(sa(),nfrequency = 1)
+
+  annual_totals_diff <- nsa_annual-sa_annual
+
+  runstest <- rjd3toolkit::testofruns(annual_totals_diff)
+
+  updowntest <- rjd3toolkit::testofupdownruns(annual_totals_diff)
+
+  dplyr::tibble(Test = c("Runs test","Up down test"),
+              Value = c(runstest$value,updowntest$value),
+              `P-value` = c(runstest$pvalue,updowntest$pvalue))|>
+  dplyr::mutate(`P-value`=cell_spec(sprintf("%.3f", `P-value`),
+                                    background=(ifelse(`P-value`<=0.05 ,"#FFCDCD","#DAFFCD")))
+  )|>
+  kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE)|>
+  kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+
+```
+:::
+
+## Column
+
+::: {.card title="Check for negative values in SA series"}
+
+```{r}
+htmlOutput("text10")
+tableOutput("tab8")
+```
+
+```{r}
+#| context: server
+
+output$text10 <- renderText({
+
+  if (check_negatives(nsa())) {
+    message_to_print <- "Not relevant (negative values in the NSA series)"
+    color <- "#DAFFCD"
+  }else if(check_negatives(sa())){
+    message_to_print <-"SA series has negative values"
+    color <- "#FFCDCD"
+  }else{
+    message_to_print <- "No negative values in the SA series"
+    color <- "#DAFFCD"
+    tab_to_print <- NULL
+  }
+
+ sprintf('<p style="background-color: %s;">%s</p>', color, message_to_print)
+
+})
+
+output$tab8 <- function(){
+
+  if(check_negatives(nsa())) {
+    tab_to_print <- NULL
+  }else if(check_negatives(sa())){
+    tab_to_print <- dplyr::tibble(Date=zoo::as.Date(stats::time(sa())),SA=sa())|>
+      dplyr::filter(SA<0)|>
+      dplyr::mutate(SA = cell_spec(SA,background = color)) |>
+      kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE) |>
+      kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+  }else{
+    tab_to_print <- NULL
+  }
+
+  tab_to_print
+
+}
+```
+:::
+
+
+::: {.card title="Overadjustment check"}
+
+```{r}
+tableOutput("tab9")
+```
+
+```{r}
+#| context: server
+
+
+output$tab9 <- function(){
+
+  lin_sa <- RJDemetra::get_indicators(sa_mod(), "preprocessing.model.y_lin")[[1]] |> diff()
+
+  n <- length(lin_sa)
+  p <- frequency(lin_sa)
+
+  acf_to_lag_p <- acf(lin_sa,lag.max = p,plot=FALSE)
+  acf_lag_4 <- acf_to_lag_p$acf[p+1,1,1]
+
+  dplyr::tibble(`Lag4 correlation`=acf_lag_4,
+                `Standard error`=1/sqrt(n),
+                `P-value`= pnorm(acf_lag_4*sqrt(n)))|>
+    dplyr::mutate(`P-value`= cell_spec(round(`P-value`,4),
+                                       background=(ifelse(`P-value`<=0.05 ,"#FFCDCD","#DAFFCD")))
+                  )|>
+    kableExtra::kbl(digits = 3, format.args = list(digits = 3, nsmall = 3), align = "lrr", table.attr = 'data-quarto-disable-processing="true"', escape = FALSE) |>
+    kableExtra::kable_styling(full_width = FALSE, bootstrap_options = c("basic", "striped"), font_size = 12)
+
+}
+
+```
+:::
+
+# Data
+
+::: {.card title="Data being validated"}
+
+```{r}
+DT::DTOutput("tabData")
+```
+
+```{r}
+#| context: server
+
+output$tabData <- DT::renderDT({
+
+  DT::datatable(dplyr::tibble(Date = zoo::as.Date(stats::time(nsa())), NSA=round(nsa(),4),SA=round(sa(),4)),
+            options = list(pageLength = 20))
+
+})
+
+```
+:::
